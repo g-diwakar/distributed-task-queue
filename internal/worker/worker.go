@@ -53,10 +53,10 @@ func (w *Worker) Run(ctx context.Context) {
 			continue
 		}
 		if j == nil {
-			continue // poll timeout — loop back immediately
+			continue // poll timeout  loop back immediately
 		}
 
-		// Re-fetch from store: the broker holds a snapshot from enqueue time.
+		// Re-fetch from store  the broker holds a snapshot from enqueue time.
 		// The job may have been cancelled via the API while sitting in the queue.
 		current, err := w.store.Get(ctx, j.ID)
 		if err != nil {
