@@ -7,9 +7,10 @@ import (
 )
 
 type Config struct {
-	Redis  RedisConfig
-	Server ServerConfig
-	Worker WorkerConfig
+	Redis     RedisConfig
+	Server    ServerConfig
+	Worker    WorkerConfig
+	Dashboard DashboardConfig
 }
 
 // RedisConfig holds Redis connection settings.
@@ -24,6 +25,10 @@ func (r RedisConfig) Enabled() bool { return r.Addr != "" }
 
 type ServerConfig struct {
 	Addr string // HTTP_ADDR — default :8080
+}
+
+type DashboardConfig struct {
+	APIURL string // API_URL — default http://localhost:8080
 }
 
 type WorkerConfig struct {
@@ -43,6 +48,9 @@ func Load() Config {
 		},
 		Server: ServerConfig{
 			Addr: get("HTTP_ADDR", ":8080"),
+		},
+		Dashboard: DashboardConfig{
+			APIURL: get("API_URL", "http://localhost:8080"),
 		},
 		Worker: WorkerConfig{
 			PoolID:    os.Getenv("POOL_ID"),
