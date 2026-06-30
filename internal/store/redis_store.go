@@ -17,12 +17,12 @@ import (
 
 const (
 	jobKeyPrefix   = "dtq:job:"
-	indexAll       = "dtq:jobs:all"
+	IndexAll       = "dtq:jobs:all"
 	indexStatusFmt = "dtq:jobs:status:%s"
 )
 
-func jobKey(id string) string       { return jobKeyPrefix + id }
-func statusKey(s job.Status) string { return fmt.Sprintf(indexStatusFmt, s) }
+func JobKey(id string) string       { return jobKeyPrefix + id }
+func StatusKey(s job.Status) string { return fmt.Sprintf(indexStatusFmt, s) }
 
 type RedisStore struct {
 	client *redis.Client
@@ -32,22 +32,29 @@ func NewRedisStore(client *redis.Client) *RedisStore {
 	return &RedisStore{client: client}
 }
 
+// Pipelined adds the store write commands for j onto an existing Redis pipeline.
+// data must be the pre-marshalled JSON for j so the caller marshals only once.
+// Use this to compose a store write into a larger atomic transaction.
+func (s *RedisStore) Pipelined(ctx context.Context, p redis.Pipeliner, j *job.Job, data []byte) {
+	p.Set(ctx, JobKey(j.ID), data, 0)
+	p.SAdd(ctx, IndexAll, j.ID)
+	p.SAdd(ctx, StatusKey(j.Status), j.ID)
+}
+
 func (s *RedisStore) Save(ctx context.Context, j *job.Job) error {
 	data, err := json.Marshal(j)
 	if err != nil {
 		return fmt.Errorf("marshal: %w", err)
 	}
 	_, err = s.client.TxPipelined(ctx, func(p redis.Pipeliner) error {
-		p.Set(ctx, jobKey(j.ID), data, 0)
-		p.SAdd(ctx, indexAll, j.ID)
-		p.SAdd(ctx, statusKey(j.Status), j.ID)
+		s.Pipelined(ctx, p, j, data)
 		return nil
 	})
 	return err
 }
 
 func (s *RedisStore) Get(ctx context.Context, id string) (*job.Job, error) {
-	data, err := s.client.Get(ctx, jobKey(id)).Bytes()
+	data, err := s.client.Get(ctx, JobKey(id)).Bytes()
 	if err == redis.Nil {
 		return nil, ErrNotFound
 	}
@@ -72,10 +79,10 @@ func (s *RedisStore) Update(ctx context.Context, j *job.Job) error {
 		return fmt.Errorf("marshal: %w", err)
 	}
 	_, err = s.client.TxPipelined(ctx, func(p redis.Pipeliner) error {
-		p.Set(ctx, jobKey(j.ID), data, 0)
+		p.Set(ctx, JobKey(j.ID), data, 0)
 		if old.Status != j.Status {
-			p.SRem(ctx, statusKey(old.Status), j.ID)
-			p.SAdd(ctx, statusKey(j.Status), j.ID)
+			p.SRem(ctx, StatusKey(old.Status), j.ID)
+			p.SAdd(ctx, StatusKey(j.Status), j.ID)
 		}
 		return nil
 	})
@@ -83,9 +90,9 @@ func (s *RedisStore) Update(ctx context.Context, j *job.Job) error {
 }
 
 func (s *RedisStore) List(ctx context.Context, f Filter) ([]*job.Job, error) {
-	indexKey := indexAll
+	indexKey := IndexAll
 	if f.Status != "" {
-		indexKey = statusKey(f.Status)
+		indexKey = StatusKey(f.Status)
 	}
 
 	ids, err := s.client.SMembers(ctx, indexKey).Result()
@@ -116,9 +123,9 @@ func (s *RedisStore) Delete(ctx context.Context, id string) error {
 		return err
 	}
 	_, err = s.client.TxPipelined(ctx, func(p redis.Pipeliner) error {
-		p.Del(ctx, jobKey(id))
-		p.SRem(ctx, indexAll, id)
-		p.SRem(ctx, statusKey(j.Status), id)
+		p.Del(ctx, JobKey(id))
+		p.SRem(ctx, IndexAll, id)
+		p.SRem(ctx, StatusKey(j.Status), id)
 		return nil
 	})
 	return err

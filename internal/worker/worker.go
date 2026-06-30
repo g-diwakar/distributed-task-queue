@@ -56,7 +56,19 @@ func (w *Worker) Run(ctx context.Context) {
 			continue // poll timeout — loop back immediately
 		}
 
-		w.execute(ctx, j)
+		// Re-fetch from store: the broker holds a snapshot from enqueue time.
+		// The job may have been cancelled via the API while sitting in the queue.
+		current, err := w.store.Get(ctx, j.ID)
+		if err != nil {
+			w.log.Error("failed to fetch job from store", zap.String("job_id", j.ID), zap.Error(err))
+			continue
+		}
+		if current.Status == job.StatusCancelled {
+			w.log.Info("skipping cancelled job", zap.String("job_id", j.ID))
+			continue
+		}
+
+		w.execute(ctx, current)
 	}
 }
 

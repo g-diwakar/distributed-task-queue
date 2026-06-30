@@ -5,19 +5,23 @@ import (
 	"time"
 
 	"g-diwakar/distributed-task-queue/internal/job"
+	"g-diwakar/distributed-task-queue/internal/store"
 )
 
 // MemoryBroker is an in-process broker backed by buffered channels.
-// Intended for testing — no persistence across restarts.
+// It mirrors RedisBroker behaviour: Enqueue saves to the store and
+// pushes to the queue together, so both brokers are used the same way.
 type MemoryBroker struct {
+	store  *store.MemoryStore
 	high   chan *job.Job
 	normal chan *job.Job
 	low    chan *job.Job
 	dead   chan *job.Job
 }
 
-func NewMemoryBroker(bufSize int) *MemoryBroker {
+func NewMemoryBroker(s *store.MemoryStore, bufSize int) *MemoryBroker {
 	return &MemoryBroker{
+		store:  s,
 		high:   make(chan *job.Job, bufSize),
 		normal: make(chan *job.Job, bufSize),
 		low:    make(chan *job.Job, bufSize),
@@ -25,16 +29,27 @@ func NewMemoryBroker(bufSize int) *MemoryBroker {
 	}
 }
 
-func (b *MemoryBroker) Enqueue(_ context.Context, j *job.Job) error {
+func (b *MemoryBroker) Enqueue(ctx context.Context, j *job.Job) error {
+	if err := b.store.Save(ctx, j); err != nil {
+		return err
+	}
+
+	var ch chan *job.Job
 	switch j.Priority {
 	case job.PriorityHigh:
-		b.high <- j
+		ch = b.high
 	case job.PriorityMedium:
-		b.normal <- j
+		ch = b.normal
 	default:
-		b.low <- j
+		ch = b.low
 	}
-	return nil
+
+	select {
+	case ch <- j:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // Dequeue polls queues in strict priority order every 10ms until a job
